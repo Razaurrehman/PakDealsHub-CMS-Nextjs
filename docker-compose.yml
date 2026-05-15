@@ -1,0 +1,33 @@
+version: '3.8'
+services:
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_DB: pakdealshub_db
+      POSTGRES_USER: pdh_user
+      POSTGRES_PASSWORD: pdh_pass
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  migrate:
+    build: .
+    command: npx prisma migrate deploy && npx prisma db seed
+    depends_on:
+      - postgres
+    environment:
+      DATABASE_URL: postgresql://pdh_user:pdh_pass@postgres:5432/pakdealshub_db
+
+  app:
+    build: .
+    ports:
+      - "3001:3000"
+    depends_on:
+      - migrate
+    environment:
+      DATABASE_URL: postgresql://pdh_user:pdh_pass@postgres:5432/pakdealshub_db
+      JWT_SECRET: change-this-in-production
+
+volumes:
+  pgdata:
