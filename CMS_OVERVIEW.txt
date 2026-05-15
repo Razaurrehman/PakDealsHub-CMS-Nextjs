@@ -1,0 +1,739 @@
+================================================================================
+  PAKDEALSHUB CMS
+  Complete System Description
+  Version 1.0.0 | Next.js 15 + Prisma + PostgreSQL
+================================================================================
+
+--------------------------------------------------------------------------------
+1. OVERVIEW
+--------------------------------------------------------------------------------
+
+PakDealsHub CMS is the backend engine powering the PakDealsHub e-commerce
+platform. It serves two primary roles:
+
+  1. Admin Panel (/admin)
+     A secure, role-protected dashboard where store administrators manage
+     every aspect of the business — products, orders, customers, content,
+     marketing, and analytics.
+
+  2. Public REST API (/api/public/*)
+     A set of HTTP endpoints consumed by the React Native mobile app and
+     any web front-end. Handles authentication, product catalogue browsing,
+     blog content delivery, and order placement.
+
+The system is built on Next.js 15 (App Router) with server-side API routes,
+Prisma ORM for type-safe database access, and PostgreSQL as the data store.
+All admin routes are protected by JWT session cookies. All public routes
+enforce rate limiting and CORS.
+
+--------------------------------------------------------------------------------
+2. ARCHITECTURE
+--------------------------------------------------------------------------------
+
+  Request Flow:
+
+    Client Request
+        │
+        ▼
+    middleware.ts                   ← Runs on every request
+        │  ├─ CORS preflight (OPTIONS) → 204 response
+        │  ├─ Banned IP check       → 403
+        │  ├─ Honeypot path check   → 404 + ban IP
+        │  ├─ Malicious payload check → 403 + ban IP
+        │  ├─ Security scanner UA   → 403 + ban IP
+        │  ├─ Harvester bot UA      → 403
+        │  ├─ Rate limit check      → 429 (with Retry-After)
+        │  └─ JWT auth guard        → 401 / redirect to login
+        │
+        ▼
+    Next.js App Router
+        │
+        ├─ /admin/**        → Admin Panel (React Server Components + Client)
+        └─ /api/**          → API Route Handlers
+
+  Database Layer:
+    All Prisma queries go through a singleton client (src/lib/prisma.ts).
+    Every model is scoped to a Site record, enabling future multi-tenancy.
+
+--------------------------------------------------------------------------------
+3. ADMIN PANEL — DETAILED MODULE DESCRIPTIONS
+--------------------------------------------------------------------------------
+
+  3.1 DASHBOARD (/admin)
+      - Summary KPI cards: Total Revenue, Orders Today, Active Products,
+        Total Customers, Pending Orders, Low Stock Alerts.
+      - Revenue chart (daily/weekly/monthly toggle).
+      - Recent orders table with status badges.
+      - Low-stock product list with quick-restock link.
+      - Activity feed showing the latest admin actions.
+
+  3.2 PRODUCTS (/admin/products)
+      - Paginated product table with search and status filter.
+      - Columns: Thumbnail, Name, Category, Brand, Price, Stock, Status,
+        Featured badge, Created date, Actions.
+      - Create / Edit product form fields:
+          Name, Slug (auto-generated, editable)
+          Short Description, Full Description (rich-text editor)
+          Price (PKR), Compare Price (PKR)
+          Category (dropdown), Brand (dropdown)
+          SKU, Stock quantity
+          Status: ACTIVE / INACTIVE / OUT_OF_STOCK
+          Featured flag, New flag, Free Delivery flag
+          Warranty text, Delivery Days estimate
+          Colours (multi-value chip input)
+          Storage / Size options (multi-value chip input)
+          Tags (multi-value chip input)
+          Image gallery upload (multiple images, first = thumbnail)
+          SEO: Meta Title, Meta Description
+      - Bulk status update.
+      - Delete with confirmation.
+
+  3.3 CATEGORIES (/admin/categories)
+      - Category list with image thumbnail, name, slug, product count,
+        sort order, featured badge, and active status.
+      - Create / Edit form:
+          Name, Slug, Description
+          Image upload
+          Sort Order
+          Featured flag (shown on app home screen)
+          Active flag
+      - Reorder via sort order field.
+
+  3.4 BRANDS (/admin/brands)
+      - Brand list with logo, name, slug, website, featured badge,
+        and active status.
+      - Create / Edit form:
+          Name, Slug, Description
+          Logo upload
+          Website URL
+          Featured flag (shown on app home screen)
+          Active flag
+
+  3.5 ORDERS (/admin/orders)
+      - Full order list with filters: status, date range, customer search.
+      - Columns: Order Number, Customer, Items, Total (PKR), Payment Method,
+        Status, Created date.
+      - Order Detail view:
+          Customer info (name, email, phone)
+          Delivery address
+          Line items with product thumbnail, quantity, and unit price
+          Order total breakdown
+          Status timeline (Pending → Confirmed → Shipped → Delivered)
+          Status update dropdown
+          Internal notes field
+      - Status values: PENDING, CONFIRMED, PROCESSING, SHIPPED,
+                       DELIVERED, CANCELLED, REFUNDED.
+
+  3.6 CUSTOMERS (/admin/customers)
+      - Customer list with name, email, phone, order count, join date,
+        and active status.
+      - Search by name or email.
+      - Block / Unblock toggle per customer:
+          Blocked customers receive HTTP 403 with code "ACCOUNT_BLOCKED"
+          on login and on every /api/public/auth/me call.
+          The mobile app detects this code and shows a dedicated blocked screen.
+      - Customer detail: full order history.
+
+  3.7 BLOGS (/admin/blogs)
+      - Blog post list with featured image, title, category, author,
+        status (DRAFT / PUBLISHED), and publish date.
+      - Create / Edit form:
+          Title, Slug (auto-generated)
+          Excerpt (short summary shown in listing cards)
+          Content (rich-text editor — supports h2, h3, p, ul/li, blockquote)
+          Featured Image upload
+          Thumbnail upload (used in compact cards)
+          Blog Category (dropdown)
+          Author Name
+          Reading Time (minutes, manual input)
+          Featured flag
+          Status: DRAFT / PUBLISHED
+          Published At date picker
+
+  3.8 BLOG CATEGORIES (/admin/blog-categories)
+      - Simple list of blog taxonomy categories.
+      - Create / Edit: Name, Slug, Description, Active flag.
+
+  3.9 BANNERS (/admin/banners)
+      - Promotional hero banners shown in the app's home screen carousel.
+      - Create / Edit:
+          Title, Subtitle
+          Tag label (e.g. "Limited Time"), Badge text (e.g. "HOT")
+          Image upload
+          Link URL, Button Text
+          Status: ACTIVE / INACTIVE
+          Sort Order
+
+  3.10 COUPONS (/admin/coupons)
+       - Discount code management.
+       - Create / Edit:
+           Code (uppercase, unique per site)
+           Type: PERCENTAGE or FIXED_AMOUNT
+           Value (percentage number or PKR amount)
+           Minimum Order Value
+           Maximum Uses (total), Max Uses Per Customer
+           Valid From / Valid Until date range
+           Active flag
+       - Usage counter displayed on the list.
+
+  3.11 REVIEWS (/admin/reviews)
+       - Customer product review moderation.
+       - Columns: Product, Customer, Rating (stars), Comment, Status, Date.
+       - Approve / Reject / Delete actions.
+       - Status values: PENDING, APPROVED, REJECTED.
+
+  3.12 STATIC PAGES (/admin/static-pages)
+       - CMS-managed informational pages served to the mobile app.
+       - Default pages: About Us, Privacy Policy, Terms & Conditions.
+       - Create / Edit: Title, Slug, Content (rich-text), Published flag.
+
+  3.13 MEDIA (/admin/media)
+       - Centralised file asset library.
+       - Upload images and files (stored in /public/uploads/).
+       - View, copy URL, and delete uploaded assets.
+       - Used by product image gallery, blog featured images, category
+         images, brand logos, and banners.
+
+  3.14 TAGS (/admin/tags)
+       - Product tag management.
+       - Tags are associated with products for filtering and SEO.
+       - Create / Edit / Delete tag records.
+
+  3.15 USERS (/admin/users)
+       - Admin user management (not customer accounts).
+       - Roles: SUPER_ADMIN, ADMIN, EDITOR.
+       - Create / Edit: Name, Email, Password, Role, Active flag.
+       - SUPER_ADMIN can manage all users; ADMIN cannot create SUPER_ADMINs.
+
+  3.16 NEWSLETTER SUBSCRIBERS (/admin/newsletter-subscribers)
+       - List of email addresses subscribed via the app or website.
+       - Export to CSV.
+       - Delete individual subscribers.
+
+  3.17 CONTACT MESSAGES (/admin/contact-messages)
+       - Inbound messages submitted via the app's contact form.
+       - Columns: Name, Email, Subject, Message preview, Date, Read status.
+       - Mark as read, delete.
+
+  3.18 ACTIVITY LOGS (/admin/activity-logs)
+       - Full audit trail of all admin actions.
+       - Columns: User, Action, Entity Type, Entity ID, Timestamp, IP Address.
+       - Filterable by user and date range.
+       - Automatically recorded for: create, update, delete, login, logout,
+         status changes, block/unblock, publish/unpublish.
+
+--------------------------------------------------------------------------------
+4. PUBLIC API — DETAILED ENDPOINT DESCRIPTIONS
+--------------------------------------------------------------------------------
+
+  All public endpoints are prefixed with /api/public/
+  All responses are JSON: { ok: true, data: ... } or { ok: false, error: "..." }
+  CORS headers are applied to every response including errors.
+
+  ── Authentication ────────────────────────────────────────────────────────────
+
+  POST /api/public/auth/send-otp
+    Body:   { email }
+    Action: Validates email format, checks it is not already registered,
+            generates a 6-digit OTP, stores it in-memory with a 5-minute TTL,
+            sends it via Nodemailer (styled HTML email).
+            Enforces a 60-second cooldown before allowing a resend.
+    Errors: "Email already registered", "Please wait X seconds before resending"
+
+  POST /api/public/auth/register
+    Body:   { name, email, phone, password, otp }
+    Action: Verifies the OTP (checks TTL and attempt count), hashes the
+            password with bcryptjs (12 rounds), creates a Customer record,
+            returns a signed JWT token.
+    Errors: "OTP has expired", "Incorrect OTP", "Too many attempts",
+            "Email already registered"
+
+  POST /api/public/auth/login
+    Body:   { email, password }
+    Action: Finds customer by email, compares password hash, checks isActive.
+            Blocked accounts return HTTP 403 with code "ACCOUNT_BLOCKED".
+            On success returns a signed JWT token.
+    Errors: "Invalid credentials", "ACCOUNT_BLOCKED" (403)
+
+  GET /api/public/auth/me
+    Headers: Authorization: Bearer <token>
+    Action:  Verifies JWT, fetches customer record.
+             Returns HTTP 403 + ACCOUNT_BLOCKED if customer is blocked.
+    Returns: { id, name, email, phone, createdAt }
+
+  PUT /api/public/auth/me
+    Headers: Authorization: Bearer <token>
+    Body:    { name?, phone? }
+    Action:  Updates customer name and/or phone. Checks isActive first.
+    Returns: Updated customer object.
+
+  ── Site ──────────────────────────────────────────────────────────────────────
+
+  GET /api/public/site
+    Action:  Returns site configuration for the domain.
+    Returns: { name, domain, logo, theme }
+
+  ── Catalogue ─────────────────────────────────────────────────────────────────
+
+  GET /api/public/categories
+    Query:   ?featured=true  (filter to featured-only)
+    Returns: Array of category objects ordered by isFeatured DESC, sortOrder ASC.
+
+  GET /api/public/brands
+    Query:   ?featured=true  (filter to featured-only)
+    Returns: Array of brand objects.
+
+  GET /api/public/products
+    Query:   ?categoryId=, ?brandId=, ?search=, ?page=, ?limit=
+    Returns: Paginated product list with total count.
+    Notes:   Full-text search across name, description, tags.
+
+  GET /api/public/products/:id
+    Returns: Full product detail including category and brand relations.
+
+  GET /api/public/reviews
+    Query:   ?productId=
+    Returns: Approved reviews for the given product.
+
+  ── Blog ──────────────────────────────────────────────────────────────────────
+
+  GET /api/public/blog-categories
+    Returns: All active blog categories.
+
+  GET /api/public/blogs
+    Query:   ?categoryId=, ?featured=true, ?page=, ?limit=
+    Returns: Paginated published blog posts.
+
+  GET /api/public/blogs/:slug
+    Returns: Full blog post detail (content, author, featuredImage, category).
+
+  ── Commerce ──────────────────────────────────────────────────────────────────
+
+  POST /api/public/orders
+    Headers: Authorization: Bearer <token>
+    Body:    { items[], deliveryAddress, paymentMethod, couponCode? }
+    Action:  Validates coupon if provided, creates Order + OrderItem records,
+             decrements stock, records activity log.
+    Returns: { orderId, orderNumber, total }
+
+  GET /api/public/coupons/validate
+    Query:   ?code=, ?orderTotal=
+    Returns: Coupon validity, discount type, and calculated discount amount.
+
+--------------------------------------------------------------------------------
+5. SECURITY SYSTEM — IN DEPTH
+--------------------------------------------------------------------------------
+
+  5.1 MIDDLEWARE LAYERS (src/middleware.ts)
+      Runs on every request before it reaches any route handler.
+      Layers execute in strict order:
+
+      Layer 1 — Banned IPs
+        An in-memory Set of banned IP addresses. Any request from a banned IP
+        immediately returns HTTP 403. Bans are added by layers 2, 3, and 4.
+
+      Layer 2 — Honeypot Paths
+        A list of well-known scanner target paths (.env, wp-admin, phpMyAdmin,
+        .git/, etc.). Any request to these paths bans the IP and returns 404.
+
+      Layer 3 — Malicious Query Strings
+        Inspects URL query parameters for SQL injection patterns (SELECT,
+        UNION, DROP, etc.) and XSS probes (<script>, javascript:, etc.).
+        Matching requests ban the IP and return 403.
+
+      Layer 4 — Security Scanner User-Agents
+        A curated list of known scanner UA strings (sqlmap, nikto, nmap,
+        masscan, zgrab, etc.). Matching requests ban the IP and return 403.
+
+      Layer 5 — Harvester / AI Crawler User-Agents
+        Blocks known content-harvesting bots (GPTBot, ClaudeBot, scrapers)
+        on API and admin routes. Returns 403 without banning.
+
+      Layer 6 — Admin Browser Check
+        Admin panel routes require a real browser UA (checks for Mozilla/,
+        Chrome/, Safari/, etc.). Non-browser clients receive 403.
+
+      Layer 7 — Rate Limiting
+        Sliding window algorithm per IP address with three policy tiers:
+          Auth routes:   10 requests / 15 minutes (strict)
+          Public API:    120 requests / 1 minute  (generous)
+          Admin routes:  60 requests / 1 minute   (moderate)
+        Blocked requests return HTTP 429 with Retry-After and
+        X-RateLimit-Remaining headers.
+
+      Layer 8 — JWT Auth Guard
+        Admin panel and protected API routes require a valid JWT session.
+        Invalid/missing session → redirect to /admin/login (admin)
+                               → HTTP 401 JSON (API).
+
+      CORS (Public API only):
+        OPTIONS preflight requests return HTTP 204 with full CORS headers.
+        All /api/public/* responses include:
+          Access-Control-Allow-Origin: <reflected origin>
+          Access-Control-Allow-Credentials: true
+          Access-Control-Allow-Methods: GET, POST, PUT, PATCH, DELETE, OPTIONS
+          Access-Control-Allow-Headers: Content-Type, Authorization
+          Vary: Origin
+
+  5.2 OTP SYSTEM (src/lib/otp-store.ts)
+      Storage:   In-memory Map — no database table required.
+      Key:       email + siteId (composite)
+      Entry:     { otp: string, expiresAt: number, attempts: number }
+      TTL:       5 minutes from generation
+      Attempts:  Maximum 3 incorrect attempts before entry is invalidated
+      Cooldown:  60-second minimum between resend requests
+      Cleanup:   setInterval runs every 10 minutes to evict expired entries
+
+  5.3 PASSWORD SECURITY
+      bcryptjs with 12 salt rounds.
+      Passwords are never stored or returned in plain text.
+      Password field is excluded from all SELECT queries via Prisma select.
+
+  5.4 JWT TOKENS
+      Signed with HS256 using JWT_SECRET environment variable.
+      7-day expiry for customer tokens.
+      Admin session tokens stored as HTTP-only cookies.
+      Customer tokens sent as Authorization: Bearer headers.
+
+  5.5 CUSTOMER BLOCKING
+      Admin sets Customer.isActive = false via /admin/customers.
+      Affected endpoints:
+        POST /api/public/auth/login → HTTP 403, code: "ACCOUNT_BLOCKED"
+        GET  /api/public/auth/me    → HTTP 403, code: "ACCOUNT_BLOCKED"
+        PUT  /api/public/auth/me    → HTTP 403, code: "ACCOUNT_BLOCKED"
+      The mobile app Redux authSlice detects this code and sets blocked=true,
+      which displays a dedicated BlockedScreen in the app.
+
+--------------------------------------------------------------------------------
+6. DATABASE SCHEMA OVERVIEW
+--------------------------------------------------------------------------------
+
+  All models include:
+    id        String  @id @default(cuid())
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+    siteId    String   (foreign key to Site — all data is site-scoped)
+
+  Core Models:
+
+  Site
+    name, domain (unique), logo, theme (JSON)
+    Root record. All other models reference siteId.
+
+  User (Admin)
+    name, email, passwordHash, role (SUPER_ADMIN | ADMIN | EDITOR), isActive
+
+  Customer (App User)
+    name, email, passwordHash, phone, isActive (false = blocked)
+
+  Category
+    name, slug, description, image, emoji, boxColor, icon
+    isFeatured (Boolean), isActive, sortOrder
+    Unique: slug + siteId
+
+  Brand
+    name, slug, description, logo, website
+    isFeatured (Boolean), isActive
+    Unique: slug + siteId
+
+  Product
+    name, slug, sku, shortDesc, description
+    price, comparePrice (Decimal)
+    thumbnail, images (String[])
+    stock (Int), status (ACTIVE | INACTIVE | OUT_OF_STOCK)
+    isFeatured, isNew, freeDelivery (Boolean)
+    warranty, deliveryDays
+    colors (String[]), storages (String[]), tags (String[])
+    categoryId (→ Category), brandId (→ Brand)
+    metaTitle, metaDescription
+    Unique: slug + siteId
+
+  Order
+    orderNumber (auto-generated), customerId (→ Customer)
+    deliveryAddress (JSON), paymentMethod
+    subtotal, discount, total (Decimal)
+    status (PENDING | CONFIRMED | PROCESSING | SHIPPED | DELIVERED |
+            CANCELLED | REFUNDED)
+    notes
+
+  OrderItem
+    orderId (→ Order), productId (→ Product)
+    name, price (Decimal), quantity, color, storage, thumbnail
+
+  Banner
+    title, subtitle, tag, badge, image, link, buttonText
+    status (ACTIVE | INACTIVE), sortOrder
+
+  Blog
+    title, slug, excerpt, content, thumbnail, featuredImage
+    authorName, readingTime, isFeatured
+    status (DRAFT | PUBLISHED), publishedAt
+    blogCategoryId (→ BlogCategory)
+    Unique: slug + siteId
+
+  BlogCategory
+    name, slug, description, isActive
+    Unique: slug + siteId
+
+  Review
+    productId (→ Product), customerId (→ Customer)
+    rating (Int 1-5), title, comment
+    status (PENDING | APPROVED | REJECTED)
+
+  Coupon
+    code (unique per site), type (PERCENTAGE | FIXED_AMOUNT), value
+    minOrderValue, maxUses, maxUsesPerCustomer, usedCount
+    validFrom, validUntil, isActive
+
+  StaticPage
+    title, slug, content, isPublished
+    Unique: slug + siteId
+
+  Media
+    filename, originalName, mimeType, size, url, alt
+
+  Tag
+    name, slug
+    Unique: slug + siteId
+
+  ActivityLog
+    userId (→ User), action, entityType, entityId
+    metadata (JSON), ipAddress
+
+  NewsletterSubscriber
+    email (unique per site), isActive
+
+  ContactMessage
+    name, email, phone, subject, message, isRead
+
+--------------------------------------------------------------------------------
+7. EMAIL SYSTEM
+--------------------------------------------------------------------------------
+
+  Provider:   Nodemailer with configurable SMTP transport
+  Default:    Gmail (smtp.gmail.com:587 with STARTTLS)
+
+  sendOtpEmail(to, otp):
+    Sends a styled HTML email containing:
+      - PakDealsHub branding header
+      - Large OTP code display (6 digits, monospace, highlighted box)
+      - Expiry notice (5 minutes)
+      - Security disclaimer (do not share the code)
+      - Footer with support email
+
+  Environment variables required:
+    SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, SMTP_FROM
+
+  Note: For Gmail, use an App Password (not your account password).
+  Enable 2-Step Verification on your Google account, then generate an
+  App Password at myaccount.google.com/apppasswords.
+
+--------------------------------------------------------------------------------
+8. SEED & DATA IMPORT
+--------------------------------------------------------------------------------
+
+  8.1 COMBINED SEED (prisma/seed.ts)
+      Run with: npx prisma db seed
+
+      Step 1 — Site
+        Upserts the PakDealsHub site record (domain: pakdealshub.com).
+
+      Step 2 — Super Admin
+        Creates admin@pakdealshub.com with password "admin123" (bcrypt).
+
+      Step 3 — Banners
+        Creates two promotional banner records.
+
+      Step 4 — Static Pages
+        Creates About Us, Privacy Policy, Terms & Conditions pages.
+
+      Step 5 — Blog Content
+        Seeds 4 blog categories and 6 full-length blog posts covering
+        smartphone reviews, buying guides, kitchen appliances, Eid deals,
+        laptop guide, and headphone review.
+
+      Step 6 — Product Crawl (surmawala.pk)
+        Fetches all Shopify collections as categories.
+        Walks each collection to fetch its products.
+        Auto-extracts brand name from product tags or title first word.
+        Upserts categories, brands, and products using the live site's ID.
+        Handles network errors gracefully — prints warning and exits cleanly
+        if the site is unreachable.
+
+  8.2 STANDALONE CRAWL (scripts/crawl-surmawala.js)
+      Run with: node scripts/crawl-surmawala.js
+      Uses a hardcoded SITE_ID — update before running on a fresh database.
+      Adds polite delay (800ms between collections, 300ms between products).
+
+  8.3 STANDALONE BLOG SEEDER (scripts/seed-blogs.js)
+      Run with: node scripts/seed-blogs.js
+      Uses a hardcoded SITE_ID — update before running on a fresh database.
+
+--------------------------------------------------------------------------------
+9. ENVIRONMENT VARIABLES
+--------------------------------------------------------------------------------
+
+  Variable                  Required   Description
+  ─────────────────────────────────────────────────────────────────────────────
+  DATABASE_URL              Yes        PostgreSQL connection string
+  JWT_SECRET                Yes        Min 32-character secret for JWT signing
+  NEXT_PUBLIC_APP_URL       Yes        Full URL of this CMS (e.g. http://localhost:3001)
+  PORT                      No         Server port (default: 3000)
+  SMTP_HOST                 Yes*       SMTP server hostname
+  SMTP_PORT                 Yes*       SMTP port (587 for STARTTLS, 465 for SSL)
+  SMTP_USER                 Yes*       SMTP login username (email address)
+  SMTP_PASS                 Yes*       SMTP password or App Password
+  SMTP_FROM                 Yes*       From address shown in sent emails
+
+  * Required only if OTP email verification is used (registration flow).
+    Without SMTP config, the send-otp endpoint will throw a connection error.
+
+--------------------------------------------------------------------------------
+10. RUNNING IN PRODUCTION
+--------------------------------------------------------------------------------
+
+  Build:
+    npm run build
+
+  Start:
+    npm run start
+
+  Recommended production setup:
+    - Run behind a reverse proxy (Nginx / Caddy) for HTTPS termination.
+    - Use a managed PostgreSQL service (Supabase, Neon, Railway, RDS).
+    - Set NODE_ENV=production in your environment.
+    - Use a strong random JWT_SECRET (minimum 64 characters recommended).
+    - Configure SMTP with a transactional email service (SendGrid, Resend,
+      Mailgun) instead of Gmail for higher volume and deliverability.
+    - Mount /public/uploads/ as a persistent volume if using containers.
+    - Set up database backups (pg_dump or managed snapshots).
+
+  Docker:
+    A docker-compose.yml is included for local development with PostgreSQL.
+    Run with: docker-compose up -d
+    This starts a PostgreSQL container with the credentials matching .env.
+
+--------------------------------------------------------------------------------
+11. PROJECT FOLDER STRUCTURE
+--------------------------------------------------------------------------------
+
+  /
+  ├── prisma/
+  │   ├── schema.prisma          All Prisma model definitions
+  │   └── seed.ts                Combined seed script
+  ├── scripts/
+  │   ├── crawl-surmawala.js     Standalone product crawler
+  │   └── seed-blogs.js          Standalone blog seeder
+  ├── public/
+  │   └── uploads/               Uploaded media files (gitignored)
+  ├── src/
+  │   ├── app/
+  │   │   ├── admin/
+  │   │   │   ├── (dashboard)/   Protected admin sections
+  │   │   │   │   ├── page.tsx         Dashboard overview
+  │   │   │   │   ├── products/        Product management
+  │   │   │   │   ├── categories/      Category management
+  │   │   │   │   ├── brands/          Brand management
+  │   │   │   │   ├── orders/          Order management
+  │   │   │   │   ├── customers/       Customer management + block/unblock
+  │   │   │   │   ├── blogs/           Blog post management
+  │   │   │   │   ├── blog-categories/ Blog category management
+  │   │   │   │   ├── banners/         Banner management
+  │   │   │   │   ├── coupons/         Coupon management
+  │   │   │   │   ├── reviews/         Review moderation
+  │   │   │   │   ├── static-pages/    CMS pages
+  │   │   │   │   ├── media/           File library
+  │   │   │   │   ├── tags/            Tag management
+  │   │   │   │   ├── users/           Admin user management
+  │   │   │   │   ├── newsletter-subscribers/
+  │   │   │   │   ├── contact-messages/
+  │   │   │   │   ├── activity-logs/
+  │   │   │   │   └── layout.tsx       Dashboard shell with sidebar
+  │   │   │   ├── login/               Admin login page
+  │   │   │   └── layout.tsx           Admin root layout
+  │   │   ├── api/
+  │   │   │   ├── auth/                Admin session auth endpoints
+  │   │   │   ├── public/              Public endpoints (mobile app)
+  │   │   │   │   ├── auth/            Customer register/login/me/send-otp
+  │   │   │   │   ├── products/        Public product catalogue
+  │   │   │   │   ├── categories/      Public category list
+  │   │   │   │   ├── brands/          Public brand list
+  │   │   │   │   ├── blogs/           Public blog posts
+  │   │   │   │   ├── blog-categories/ Public blog categories
+  │   │   │   │   ├── banners/         Public banners
+  │   │   │   │   ├── orders/          Place order (auth required)
+  │   │   │   │   ├── reviews/         Product reviews
+  │   │   │   │   ├── coupons/         Coupon validation
+  │   │   │   │   └── site/            Site config
+  │   │   │   ├── banners/             Admin banner CRUD
+  │   │   │   ├── blogs/               Admin blog CRUD
+  │   │   │   ├── brands/              Admin brand CRUD
+  │   │   │   ├── categories/          Admin category CRUD
+  │   │   │   ├── customers/           Admin customer CRUD
+  │   │   │   ├── coupons/             Admin coupon CRUD
+  │   │   │   ├── orders/              Admin order management
+  │   │   │   ├── products/            Admin product CRUD
+  │   │   │   ├── reviews/             Admin review moderation
+  │   │   │   ├── media/               File upload/delete
+  │   │   │   ├── users/               Admin user CRUD
+  │   │   │   ├── stats/               Dashboard KPI stats
+  │   │   │   ├── export/              CSV export endpoint
+  │   │   │   ├── activity-logs/       Audit log retrieval
+  │   │   │   ├── upload/              File upload handler
+  │   │   │   └── ...
+  │   │   ├── globals.css              Tailwind base styles
+  │   │   ├── layout.tsx               Root HTML layout
+  │   │   ├── robots.txt/              Robots.txt route
+  │   │   └── trap/                    Honeypot trap route
+  │   ├── components/
+  │   │   ├── admin/
+  │   │   │   ├── AdminListSkeleton.tsx  Loading placeholder for tables
+  │   │   │   ├── DataTable.tsx          Reusable paginated data table
+  │   │   │   ├── ExportButton.tsx       CSV export trigger button
+  │   │   │   ├── FilterBar.tsx          Search + filter toolbar
+  │   │   │   ├── PageHeader.tsx         Section title + action button
+  │   │   │   └── Sidebar.tsx            Navigation sidebar with links
+  │   │   ├── shared/
+  │   │   │   ├── ImageUpload.tsx        Drag-and-drop image uploader
+  │   │   │   └── RichTextEditor.tsx     Rich text content editor
+  │   │   └── ui/
+  │   │       ├── badge.tsx              Status / label badge
+  │   │       ├── button.tsx             Button (primary, secondary, danger…)
+  │   │       ├── card.tsx               Content card container
+  │   │       ├── input.tsx              Text input field
+  │   │       ├── modal.tsx              Modal dialog
+  │   │       ├── select.tsx             Dropdown select
+  │   │       ├── skeleton.tsx           Animated loading skeleton
+  │   │       ├── ThemeProvider.tsx      Dark/light mode context
+  │   │       ├── ThemeToggle.tsx        Theme toggle button
+  │   │       └── toast.tsx              Toast notification system
+  │   ├── hooks/
+  │   │   └── useDebounce.ts             Debounce hook for search inputs
+  │   ├── lib/
+  │   │   ├── activity-log.ts            createLog() helper
+  │   │   ├── api-response.ts            Standardised JSON response helpers
+  │   │   ├── auth.ts                    JWT sign/verify, getSessionFromRequest
+  │   │   ├── bot-detection.ts           UA lists, honeypot paths, ban store
+  │   │   ├── mailer.ts                  Nodemailer transport + sendOtpEmail()
+  │   │   ├── otp-store.ts               In-memory OTP map with TTL + cleanup
+  │   │   ├── prisma.ts                  Prisma singleton client
+  │   │   ├── rate-limit.ts              Sliding window rate limiter
+  │   │   ├── site.ts                    getSiteByDomain() helper
+  │   │   ├── utils.ts                   slugify, formatPKR, etc.
+  │   │   └── validations/
+  │   │       └── index.ts               Zod schemas for all entities
+  │   ├── middleware.ts                  Security + CORS + auth middleware
+  │   └── types/
+  │       └── index.ts                   Shared TypeScript types
+  ├── .env.example                       Environment variable template
+  ├── .gitignore
+  ├── docker-compose.yml                 Local PostgreSQL setup
+  ├── next.config.ts                     Next.js configuration
+  ├── package.json
+  ├── postcss.config.js
+  ├── tailwind.config.ts
+  └── tsconfig.json
+
+--------------------------------------------------------------------------------
+  PakDealsHub CMS v1.0.0 | © 2026 PakDealsHub | All Rights Reserved
+================================================================================
